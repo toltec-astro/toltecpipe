@@ -10,7 +10,7 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = ['Click>=7.0', 'dagster>=1.0', 'dagit', 'pydantic', 'sqlalchemy', 'loguri', 'pandas']
+requirements = ['Click>=7.0', 'dagster>=1.0', 'dagit', 'pydantic', 'sqlalchemy', 'loguru', 'pandas']
 
 test_requirements = ['pytest>=3', ]
 
