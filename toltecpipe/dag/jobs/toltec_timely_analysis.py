@@ -193,8 +193,7 @@ def reduce_raw_obs_graph():
 
 
 @config_mapping(config_schema=raw_obs_proc_config_schema)
-def dispatch_config(config):
-    print(config)
+def dispatch_raw_obs_config(config):
     return {
             "reduce_raw_obs_graph": {
                 "ops": {
@@ -210,8 +209,8 @@ def dispatch_config(config):
 
 
 
-@graph(config=dispatch_config)
-def raw_obs_proc_graph():
+@graph(config=dispatch_raw_obs_config)
+def dispatch_raw_obs():
     reduce_raw_obs_graph()
     toltec_data_rsync_graph()
 
@@ -256,7 +255,7 @@ def make_toltec_timely_analysis_jobs(resource_defs):
 
     return [
         make_toltec_raw_obs_db_sensor(
-            raw_obs_proc_graph.to_job(
+            dispatch_raw_obs.to_job(
                 resource_defs=resource_defs, config=raw_obs_uid_paritition_config
             ),
             resource_defs=resource_defs,

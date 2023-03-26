@@ -104,6 +104,11 @@ def toltec_raw_data_store(context):
             default_value="99_data_lmt",
             description="The path of target data archive root.",
         ),
+        "dest_path_device_label_allowlist": Field(
+            StringSource,
+            default_value="data_transfer",
+            description="Comma seprated list of devices the dest_path must resides in.",
+        ),
     },
     description="The toltec data rsync runtime config.",
 )
@@ -125,7 +130,10 @@ resource_defs_by_deployment_name = {
             {"data_lmt_dir": {"env": "TOLTECPIPE_TOLTEC_RAW_DATA_STORE_DATA_LMT_DIR"}}
             ),
         "toltec_data_rsync_config": toltec_data_rsync_config.configured(
-            {'dest_path': {"env": "TOLTECPIPE_TOLTEC_DATA_RSYNC_DEST_PATH"}}
+            {
+                'dest_path': {"env": "TOLTECPIPE_TOLTEC_DATA_RSYNC_DEST_PATH"},
+                'dest_path_device_label_allowlist': {"env": "TOLTECPIPE_TOLTEC_DATA_RSYNC_DEST_PATH_DEVICE_LABEL_ALLOWLIST"},
+                },
             ),
     }
 }

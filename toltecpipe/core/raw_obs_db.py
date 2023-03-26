@@ -116,6 +116,49 @@ class ToltecRawObsDB(object):
         )
         return r
 
+    def query_id_range(
+        self, time_start=None, time_end=None, table_name="toltec", valid_only=True
+    ):
+        tname = table_name
+        t = self._bind.tables
+        where = [True]
+        if valid_only:
+            where.append(t[tname].c.Valid > 0)
+
+        if time_start is not None:
+            where.append(
+                sqla_func.timestamp(
+                    t[tname].c.Date,
+                    t[tname].c.Time) >= time_start,
+                    )
+        if time_end is not None:
+            where.append(
+                sqla_func.timestamp(
+                    t[tname].c.Date,
+                    t[tname].c.Time) <= time_end,
+                    )
+        where_clause = se.and_(*where)
+        cols_map = {
+            "id_min": sqla_func.min(t[tname].c.id),
+            "id_max": sqla_func.max(t[tname].c.id),
+        }
+        stmt = (
+            se.select(cols_map.values())
+            .select_from(
+                t[tname]
+            )
+            .where(where_clause)
+            .order_by(se.desc(t[tname].c.id))
+            .limit(1)
+        )
+        with self._bind.session_context() as session:
+            r = dict(zip(cols_map.keys(), session.execute(stmt).fetchone()))
+        id_start, id_end = r['id_min'], r['id_max'] + 1
+        logger.debug(
+            f'query id time_start={time_start} time_end={time_end}: id_start={id_start} id_end={id_end}'
+        )
+        return id_start, id_end
+
     def _resovle_id_range(
         self, id, master=None, obs_type=None, table_name="toltec", valid_only=True
     ):
@@ -204,6 +247,7 @@ class ToltecRawObsDB(object):
                 con=session.bind,
                 parse_dates=self._parse_dates_keys,
             )
+        # logger.debug(f"query result: \n{df}")
         return df
 
     def id_query(

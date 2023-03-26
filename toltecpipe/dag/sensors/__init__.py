@@ -6,7 +6,7 @@ from dagster import (
     build_resources,
     SkipReason,
 )
-
+from datetime import datetime, timedelta, timezone
 from toltecpipe.core.raw_obs_db import make_toltec_raw_obs_uid
 from ..resources import toltec_raw_obs_db
 
@@ -31,21 +31,23 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
             return SkipReason("No new raw files found in db.")
         if id_since is None:
             # limit the sensor to the latest 100 entries
-            id_since = id_current - 100 + 1
+            # query the recent 30days and limit to 100 entries
+            time_start = datetime.now(timezone.utc) - timedelta(days=30)
+            id_since, _ = toltec_raw_obs_db.query_id_range(time_start=time_start)
+            if id_current + 1 - id_since > 100:
+                id_since = id_current + 1 - 100
         # re-query to collect all obs items
         df = toltec_raw_obs_db.id_query_grouped(id=slice(id_since, id_current + 1))
 
         def _make_run_request(entry):
             run_config = {
                 "ops": {
-                    "create_raw_obs_index": {
                         "config": {
-                            "master": entry["master"],
+                            "master": entry["master"].lower(),
                             "obsnum": entry["obsnum"],
                             "subobsnum": entry["subobsnum"],
                             "scannum": entry["scannum"],
                         }
-                    }
                 }
             }
             run_key = make_toltec_raw_obs_uid(entry)
