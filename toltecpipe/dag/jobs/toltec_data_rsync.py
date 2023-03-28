@@ -14,6 +14,7 @@ from dagster import (
     AssetMaterialization,
     AssetKey,
 )
+from pathlib import Path
 import re
 import json
 import os
@@ -76,6 +77,18 @@ def dispatch_rsync_commands(raw_data_rsync_commands):
 
 
 def _query_path_device_info(path, human_readable_size=True):
+    # this seems to be necessary to allow findmnt respond when the disk
+    # is on standby
+    path = Path(path)
+    if not path.exists() or not path.is_dir():
+        return {
+                "success": False,
+                "message": f"Path {path} does not exist or is not a directory",
+                "command": None,
+                "stdout": None
+                }
+    subprocess.run(['touch', str(path)])
+
     path_device_info_cmd = f'findmnt --output-all --real --json -T {path}'
     if not human_readable_size:
         path_device_info_cmd = path_device_info_cmd + ' -b'
@@ -136,7 +149,7 @@ def run_rsync(context, cmd_item):
         else:
             device_is_bad = (False, None)
     else:
-        device_is_bad = (True, info['mesage'])
+        device_is_bad = (True, r['message'])
 
     device_check_metadata = {
                 "name": f'check_device_for_{name}',
