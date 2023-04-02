@@ -84,8 +84,8 @@ def _query_path_device_info(path, human_readable_size=True):
         return {
                 "success": False,
                 "message": f"Path {path} does not exist or is not a directory",
-                "command": None,
-                "stdout": None
+                "command": '',
+                "stdout": ''
                 }
     subprocess.run(['touch', str(path)])
 

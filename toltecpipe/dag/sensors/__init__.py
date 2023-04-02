@@ -21,24 +21,43 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
             toltec_raw_obs_db = resources.toltec_raw_obs_db  # type: ignore
         cursor = context.cursor or None
         if cursor is None:
-            id_since = None
+            id_cursor = None
+            id_next = None
         else:
             cursor = json.loads(cursor)
-            id_since = cursor["id"]
-        obs_latest = toltec_raw_obs_db.query_obs_latest()
-        id_current = obs_latest["id"]
-        if id_since is not None and id_current <= id_since:
-            return SkipReason("No new raw files found in db.")
-        if id_since is None:
-            # limit the sensor to the latest 100 entries
-            # query the recent 30days and limit to 100 entries
-            time_start = datetime.now(timezone.utc) - timedelta(days=30)
-            id_since, _ = toltec_raw_obs_db.query_id_range(time_start=time_start)
-            if id_current + 1 - id_since > 100:
-                id_since = id_current + 1 - 100
-        # re-query to collect all obs items
-        df = toltec_raw_obs_db.id_query_grouped(id=slice(id_since, id_current + 1))
+            # this is always the min id of a group
+            id_cursor = cursor['id_start']
+            id_next = cursor['id_end']
 
+        n_days = 7
+        time_start = datetime.now(timezone.utc) - timedelta(days=n_days)
+
+        table_name = 'toltec'
+
+        obs_latest = toltec_raw_obs_db.query_obs_group_latest(table_name=table_name)
+        id_current = obs_latest['id_start']
+        # update id_next in case it is not present
+        # this limits to the recet 100 entries
+        if id_next is None:
+            id_since, _ = toltec_raw_obs_db.query_group_id_range(time_start=time_start, table_name=table_name)
+            if id_current + 1 - id_since > 100:
+                id0 = id_current + 1 - 100
+            else:
+                id0 = id_since
+            # make sure id is group id
+            id_cursor, id_next = toltec_raw_obs_db.query_group_id_range_for_id(id0, table_name=table_name)
+
+        # skip if no new group
+        if id_current <= id_cursor:
+            return SkipReason("No new raw files found in db.")
+
+        # re-query to collect all new files
+        df = toltec_raw_obs_db.id_query_grouped(id=slice(id_next, None), valid_only=True, table_name=table_name)
+        # there is a chance that the group has not be all valid yet
+        if len(df) == 0:
+            return SkipReason("New raw files found but contain invalid entries.")
+
+        # now we can make the run request with valid groups
         def _make_run_request(entry):
             run_config = {
                 "ops": {
@@ -50,12 +69,23 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
                         }
                 }
             }
+            tag_keys = [
+                "master",
+                "obsnum",
+                "subobsnum",
+                "scannum",
+                "repeat",
+                "obs_type",
+                "n_data_items",
+            ]
+            tags = {k: str(entry[k]) for k in tag_keys}
             run_key = make_toltec_raw_obs_uid(entry)
-            return RunRequest(run_key=run_key, run_config=run_config)
+            return RunRequest(run_key=run_key, run_config=run_config, tags=tags)
 
         run_requests = [
             _make_run_request(entry) for entry in df.to_dict(orient="records")
         ]
+
         context.update_cursor(json.dumps(obs_latest))
         return run_requests
 

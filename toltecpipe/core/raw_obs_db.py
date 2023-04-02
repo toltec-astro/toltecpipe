@@ -116,8 +116,17 @@ class ToltecRawObsDB(object):
         )
         return r
 
+    def query_obs_group_latest(
+        self, master=None, obs_type=None, table_name="toltec"
+    ):
+        r = self.query_obs_latest(master=master, obs_type=obs_type, table_name=table_name, valid_only=False)
+        id_start, id_end = self.query_group_id_range_for_id(r.pop('id'), table_name=table_name)
+        r['id_start'] = id_start
+        r['id_end'] = id_end
+        return r
+
     def query_id_range(
-        self, time_start=None, time_end=None, table_name="toltec", valid_only=True
+        self, time_start=None, time_end=None, table_name="toltec", valid_only=True,
     ):
         tname = table_name
         t = self._bind.tables
@@ -159,6 +168,64 @@ class ToltecRawObsDB(object):
         )
         return id_start, id_end
 
+    def query_group_id_range(
+        self, time_start=None, time_end=None, table_name="toltec",
+        ):
+        id_start, id_end = self.query_id_range(time_start=time_start, time_end=time_end, table_name=table_name, valid_only=False)
+        grouped_id_start = self.query_group_id_range_for_id(id_start, table_name=table_name)[0]
+        grouped_id_end = self.query_group_id_range_for_id(id_end - 1, table_name=table_name)[1]
+        logger.debug(f"query grouped id: id_start={id_start} -> {grouped_id_start} id_end={id_end} -> {grouped_id_end}")
+        return grouped_id_start, grouped_id_end
+
+    def query_group_id_range_for_id(self, id, table_name="toltec"):
+        # this is useful to include all items of a group.
+        tname = table_name
+        t = self._bind.tables
+        # query to get obsnum, subobsnum, scannum and master
+        cols_map = {
+            "master_id": t[tname].c.Master,
+            "obsnum": t[tname].c.ObsNum,
+            "subobsnum": t[tname].c.SubObsNum,
+            "scannum": t[tname].c.ScanNum,
+        }
+        stmt = (
+            se.select(cols_map.values())
+            .select_from(
+                t[tname]
+            )
+            .where(t[tname].c.id == id)
+            .limit(1)
+        )
+        with self._bind.session_context() as session:
+            r = dict(zip(cols_map.keys(), session.execute(stmt).fetchone()))
+        # do query to get id range
+        where = [
+            t[tname].c.Master == r['master_id'],
+            t[tname].c.ObsNum == r['obsnum'],
+            t[tname].c.SubObsNum == r['subobsnum'],
+            t[tname].c.ScanNum == r['scannum'],
+        ]
+        where_clause = se.and_(*where)
+        cols_map = {
+            "id_min": sqla_func.min(t[tname].c.id),
+            "id_max": sqla_func.max(t[tname].c.id),
+        }
+        stmt = (
+            se.select(cols_map.values())
+            .select_from(
+                t[tname]
+            )
+            .where(where_clause)
+        )
+        with self._bind.session_context() as session:
+            r = dict(zip(cols_map.keys(), session.execute(stmt).fetchone()))
+        id_start, id_end = r['id_min'], r['id_max'] + 1
+        logger.debug(
+            f'query group id range for {id=}: id_start={id_start} id_end={id_end}'
+        )
+        return id_start, id_end
+
+
     def _resovle_id_range(
         self, id, master=None, obs_type=None, table_name="toltec", valid_only=True
     ):
@@ -195,7 +262,7 @@ class ToltecRawObsDB(object):
             master=master,
             obs_type=obs_type,
             table_name=table_name,
-            valid_only=valid_only,
+            valid_only=False,
         )
         tname = table_name
         t = self._bind.tables
@@ -204,8 +271,12 @@ class ToltecRawObsDB(object):
             t[tname].c.id >= id_range.start,
             t[tname].c.id < id_range.stop,
         ]
+        # herethe validstate is checked on the group valid state
+        having = [True]
+        all_valid = sqla_func.bit_and(t[tname].c.Valid).label("all_valid")
+        any_valid = sqla_func.bit_or(t[tname].c.Valid).label("any_valid")
         if valid_only:
-            where.append(t[tname].c.Valid > 0)
+            having.append(all_valid > 0)
         if master is not None:
             where.append(t["master"].c.label == master.upper())
         if obs_type is not None:
@@ -223,6 +294,9 @@ class ToltecRawObsDB(object):
             sqla_func.max(t["obstype"].c.label).label("obs_type"),
             sqla_func.max(t["master"].c.label).label("master"),
             # sqla_func.array_agg(t[tname].c.RoachIndex).label("roachids"),
+            sqla_func.count(t[tname].c.id).label("n_data_items"),
+            all_valid,
+            any_valid,
         ]
         select_tbl = (
             t[tname]
@@ -240,6 +314,7 @@ class ToltecRawObsDB(object):
                 t[tname].c.SubObsNum.label("subobsnum"),
                 t[tname].c.ScanNum.label("scannum"),
             )
+            .having(se.and_(*having))
         )
         with self._bind.session_context() as session:
             df = pd.read_sql_query(
@@ -247,7 +322,7 @@ class ToltecRawObsDB(object):
                 con=session.bind,
                 parse_dates=self._parse_dates_keys,
             )
-        # logger.debug(f"query result: \n{df}")
+        logger.debug(f"query group result: \n{df}")
         return df
 
     def id_query(
@@ -324,12 +399,14 @@ class ToltecRawObsDB(object):
                 isouter=True,
             ).join(t_cal_master, onclause=(t_cal.c.Master == t_cal_master.c.id))
         stmt = se.select(select_cols).select_from(select_tbl).where(se.and_(*where))
+        logger.debug(f"stmt={stmt}")
         with self._bind.session_context() as session:
             df_raw_obs = pd.read_sql_query(
                 stmt,
                 con=session.bind,
                 parse_dates=self._parse_dates_keys,
             )
+            logger.debug(f"{df_raw_obs}")
         return df_raw_obs
 
     def obs_query(
@@ -456,6 +533,129 @@ class ToltecRawObsDB(object):
         )
         df_raw_obs.sort_values(by=self._dp_raw_obs_group_keys)
         return df_raw_obs
+
+
+    def obs_query_grouped(
+        self,
+        obsnum=None,
+        subobsnum=None,
+        scannum=None,
+        table_name="toltec", master=None, obs_type=None, valid_only=True
+    ):
+
+        # handle obsnum, subobsnu, and scannums.
+        # when they are not present, the latest is returned.
+        def _validate_num_arg(name, value, allow_negative=False):
+            if value is None:
+                return slice(-1, None)
+            if isinstance(value, int):
+                return slice(value, value + 1)
+            elif isinstance(value, slice):
+                if value.step is not None and value.step != 1:
+                    raise ValueError(
+                        f"{name} slice has to be contiguous and incrementing"
+                    )
+                if allow_negative:
+                    return value
+                # check if start and stop are negative
+                if value.start < 0 or value.stop < 0:
+                    raise ValueError(f"{name} slice start/stop has to be non-negative")
+            raise ValueError(f"{name} has to be None, int or slice")
+
+        obsnum = _validate_num_arg("obsnum", obsnum, allow_negative=True)
+        subobsnum = _validate_num_arg("subobsnum", subobsnum)
+        scannum = _validate_num_arg("scannum", scannum)
+        logger.debug(
+            f"query obs group {obsnum=} {subobsnum=} {scannum=} {master=} {obs_type=}"
+        )
+        if obsnum.stop is None:
+            # query for latest obsnum
+            obs_latest = self.query_obs_latest(
+                master=master, obs_type=obs_type, valid_only=valid_only
+            )
+            logger.debug(f"latest obs: {obs_latest}")
+            obsnum_stop = obs_latest["obsnum"] + 1
+        else:
+            obsnum_stop = obsnum.stop
+        # resolve the obsnum slice
+        obsnum_range = range(*obsnum.indices(obsnum_stop))
+        logger.debug(
+            f"query toltecdb for groups of obsnum [{obsnum_range.start}:{obsnum_range.stop}]"
+        )
+
+        tname = table_name
+        t = self._bind.tables
+
+        where = [
+            t[tname].c.ObsNum >= obsnum_range.start,
+            t[tname].c.ObsNum < obsnum_range.stop,
+        ]
+        if subobsnum.start is not None:
+            where.append(t[tname].c.SubObsNum >= subobsnum.start)
+        if subobsnum.stop is not None:
+            where.append(t[tname].c.SubObsNum < subobsnum.stop)
+        if scannum.start is not None:
+            where.append(t[tname].c.ScanNum >= scannum.start)
+        if scannum.stop is not None:
+            where.append(t[tname].c.ScanNum < scannum.stop)
+        if obs_type is not None:
+            where.append(t["obstype"].c.label == obs_type)
+
+        # herethe valid state is checked on the group valid state
+        having = [True]
+        all_valid = sqla_func.bit_and(t[tname].c.Valid).label("all_valid")
+        any_valid = sqla_func.bit_or(t[tname].c.Valid).label("any_valid")
+        if valid_only:
+            having.append(all_valid > 0)
+
+        if master is not None:
+            where.append(t["master"].c.label == master.upper())
+        if obs_type is not None:
+            where.append(t["obstype"].c.label == obs_type)
+
+        select_cols = [
+            sqla_func.min(t[tname].c.id).label("id_min"),
+            sqla_func.max(t[tname].c.id).label("id_max"),
+            sqla_func.max(sqla_func.timestamp(t[tname].c.Date, t[tname].c.Time)).label(
+                "time_obs"
+            ),
+            sqla_func.max(t[tname].c.ObsNum).label("obsnum"),
+            sqla_func.max(t[tname].c.SubObsNum).label("subobsnum"),
+            sqla_func.max(t[tname].c.ScanNum).label("scannum"),
+            sqla_func.max(t[tname].c.RepeatLevel).label("repeat"),
+            sqla_func.max(t["obstype"].c.label).label("obs_type"),
+            sqla_func.max(t["master"].c.label).label("master"),
+            # sqla_func.array_agg(t[tname].c.RoachIndex).label("roachids"),
+            sqla_func.count(t[tname].c.id).label("n_data_items"),
+            all_valid,
+            any_valid,
+        ]
+        select_tbl = (
+            t[tname]
+            .join(t["obstype"], onclause=(t[tname].c.ObsType == t["obstype"].c.id))
+            .join(t["master"], onclause=(t[tname].c.Master == t["master"].c.id))
+        )
+
+        stmt = (
+            se.select(select_cols)
+            .select_from(select_tbl)
+            .where(se.and_(*where))
+            .group_by(
+                t[tname].c.Master.label("master_id"),
+                t[tname].c.ObsNum.label("obsnum"),
+                t[tname].c.SubObsNum.label("subobsnum"),
+                t[tname].c.ScanNum.label("scannum"),
+            )
+            .having(se.and_(*having))
+        )
+        with self._bind.session_context() as session:
+            df = pd.read_sql_query(
+                stmt,
+                con=session.bind,
+                parse_dates=self._parse_dates_keys,
+            )
+        logger.debug(f"query obs group result: \n{df}")
+        return df
 
     @staticmethod
     def _normalize_meta(meta):

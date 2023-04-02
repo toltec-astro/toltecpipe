@@ -11,11 +11,13 @@ from dagster import (
     op,
     graph,
     AssetMaterialization,
+    AssetObservation,
     AssetKey,
     config_mapping,
 )
 import yaml
 import os
+from pathlib import Path
 import pty
 import shlex
 
@@ -44,7 +46,7 @@ def create_raw_obs_index(context):
 
     dp_index = db.get_dp_index_for_obs(
         obsnum=obsnum, subobsnum=subobsnum, scannum=scannum, master=master,
-        table_name='toltec_r1',
+        table_name='toltec_r1', with_cal_info=False,
     )
     # unpack
     dp_index = dp_index["data_items"][-1]
@@ -76,6 +78,9 @@ def create_raw_obs_index(context):
 @op(out=DynamicOut(Dict), description="Dispatch data items for reduction.")
 def dispatch_raw_obs_data_items(raw_obs_index):
     for data_item in raw_obs_index["data_items"]:
+        # attach parent meta to each item for later usage
+        data_item = data_item.copy()
+        data_item['meta']['parent_meta'] = raw_obs_index['meta']
         yield DynamicOutput(
             data_item, mapping_key=data_item["meta"]["name"].replace("-", "_")
         )
@@ -85,6 +90,7 @@ def dispatch_raw_obs_data_items(raw_obs_index):
 def reduce_raw_obs_data_item(context, raw_obs_data_item):
     reduced_obs_data_item = dict(recipe_name="kids", **raw_obs_data_item)
     if raw_obs_data_item['meta']['obs_type'] == 'Nominal':
+        # skip nominal data as those are handled by the adhoc reduction.
         yield Output(reduced_obs_data_item)
         return
     # trigger KIDs reduction
@@ -103,23 +109,33 @@ def reduce_raw_obs_data_item(context, raw_obs_data_item):
         )
     )
     exitcode = pty.spawn(shlex.split(cmd))
-    if exitcode > 0:
-        raise Failure(
-            description="Failed run script.",
+    # if exitcode > 0:
+        # raise Failure(
+        #     description="Failed run script.",
+        #     metadata={
+        #         "name": name,
+        #         "command": cmd,
+        #     },
+        # )
+    context.log_event(
+        AssetObservation(
+            asset_key=AssetKey(f'reduce_kids_{name}'),
             metadata={
-                "name": name,
-                "command": cmd,
-            },
+                "exitcode": exitcode
+            }
         )
+    )
     yield Output(reduced_obs_data_item)
 
 
 @op(out=Out(Dict), description="Collect reudced obs data items to index.")
 def collect_reduced_obs_data_items(reduced_data_items):
-    meta = reduced_data_items[0]['meta']
-    name = '{interface}_{obsnum}_{subobsnum}_{scannum}'.format(**meta)
+    meta = reduced_data_items[0]['meta']['parent_meta'].copy()
+    meta.update({
+        "data_prod_type": "dp_reduced_obs",
+        })
     reduced_obs_index = {
-        "meta": {"name": name},
+        "meta": meta,
         "data_items": reduced_data_items,
     }
     yield Output(reduced_obs_index)
@@ -136,7 +152,7 @@ def quicklook_reduced_raw_obs(context, reduced_obs_index):
     cmd = '{}/reduce_kids_ql.sh {}'.format(scriptdir, ' '.join(filepaths))
     context.log_event(
         AssetMaterialization(
-            asset_key=AssetKey(f'kids_quicklook_{name}'),
+            asset_key=AssetKey(f'kids_quicklook_reduce_{name}'),
             description=f"kids quick look reduce command",
             metadata={
                 "name": name,
@@ -153,6 +169,27 @@ def quicklook_reduced_raw_obs(context, reduced_obs_index):
                 "command": cmd,
             },
         )
+    # collect quick look images in the output directory
+    # TODO properly handle the dpdir
+    obsnum = reduced_obs_index['meta']['obsnum']
+    dpdir = Path('/data_lmt/toltec/reduced').joinpath(f'{obsnum}')
+    ql_files = list(dpdir.glob(f"**/*.png"))
+    # compose an md with urls
+    md_content = '\n'.join([
+        f'http://taco/ql/{obsnum}/{f.relative_to(dpdir)}'
+        for f in ql_files
+        ])
+    context.log_event(
+        AssetMaterialization(
+            asset_key=AssetKey(f'kids_quicklook_files_{name}'),
+            description=f"kids quick look reduce results",
+            metadata={
+                "name": name,
+                "dpdir": str(dpdir),
+                "quicklook_files": MetadataValue.md(md_content),
+            },
+        )
+    )
     yield Output(quicklook_reduced_obs_index)
 
 
@@ -241,6 +278,7 @@ def make_toltec_timely_analysis_jobs(resource_defs):
             "scannum",
             "repeat",
             "obs_type",
+            "n_data_items",
         ]
         return {k: entry[k] for k in include_keys}
 
