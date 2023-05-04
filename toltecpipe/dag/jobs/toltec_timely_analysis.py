@@ -146,6 +146,11 @@ def collect_reduced_obs_data_items(reduced_data_items):
 def quicklook_reduced_raw_obs(context, reduced_obs_index):
     quicklook_reduced_obs_index = dict(recipe_name="kids_quicklook", **reduced_obs_index)
     # this can also trigger the kids QL product.
+    if reduced_obs_index['data_items'][0]['meta']['obs_type'] == 'Nominal':
+        # skip nominal data as those are handled by the adhoc reduction.
+        yield Output(reduced_obs_index)
+        return
+
     scriptdir = os.path.expanduser('~/kids_bin')
     filepaths = [raw_obs_data_item['filepath'] for raw_obs_data_item in reduced_obs_index['data_items']]
     name = reduced_obs_index['meta']['name']
