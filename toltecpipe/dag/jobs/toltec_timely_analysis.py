@@ -22,9 +22,9 @@ import pty
 import shlex
 
 from ..sensors import make_toltec_raw_obs_db_sensor
-from ...core.raw_obs_db import make_toltec_raw_obs_uid, parse_toltec_raw_obs_uid
 from .toltec_data_rsync import toltec_data_rsync_graph
 from .config_schema import raw_obs_proc_config_schema
+from .partition import make_raw_obs_uid_partition_config
 
 
 @op(
@@ -258,48 +258,26 @@ def dispatch_raw_obs():
 
 
 def make_toltec_timely_analysis_jobs(resource_defs):
+    resource_defs = resource_defs.copy()
+    toltec_data_rsync_dest_presets = resource_defs.pop("toltec_data_rsync_dest_presets")
+    with build_resources({"toltec_data_rsync_dest_presets": toltec_data_rsync_dest_presets}) as resources:
+        dests_by_name = {d["name"]: d for d in resources.toltec_data_rsync_dest_presets}
+        dest = dests_by_name.get("data_transfer", None)
+        if dest is not None:
+            resource_defs["toltec_data_rsync_config"] = resource_defs["toltec_data_rsync_config"].configured({
+                "dest_path": dest["dest_path"],
+                "dest_path_device_label_allowlist": dest["dest_path_device_label_allowlist"],
+                })
+        else:
+            raise ValueError("no data transfer dest found")
 
-    _partition_info_cache = {}
-
-    def partition_fn(_current_time=None):
-        with build_resources(resource_defs) as resources:
-            r = resources.toltec_raw_obs_db  # type: ignore
-            # query the date entries in the db
-            df = r.id_query_grouped(id=slice(-10000, None))
-            entries = df.to_dict(orient="records")
-            partition_keys = []
-            for entry in entries:
-                partition_key = make_toltec_raw_obs_uid(entry)
-                partition_keys.append(partition_key)
-                _partition_info_cache[partition_key] = entry
-        return partition_keys
-
-    def tags_for_partition_fn(partition_key):
-        entry = _partition_info_cache[partition_key]
-        include_keys = [
-            "master",
-            "obsnum",
-            "subobsnum",
-            "scannum",
-            "repeat",
-            "obs_type",
-            "n_data_items",
-        ]
-        return {k: entry[k] for k in include_keys}
-
-    parse_partition_key = parse_toltec_raw_obs_uid
-
-    @dynamic_partitioned_config(
-        partition_fn, tags_for_partition_fn=tags_for_partition_fn
-    )
-    def raw_obs_uid_paritition_config(partition_key):
-        d = parse_partition_key(partition_key)
-        return {"ops": {"config": d}}
-
+    raw_obs_uid_partition_config = make_raw_obs_uid_partition_config(
+            resource_defs=resource_defs,
+            )
     return [
         make_toltec_raw_obs_db_sensor(
             dispatch_raw_obs.to_job(
-                resource_defs=resource_defs, config=raw_obs_uid_paritition_config
+                resource_defs=resource_defs, config=raw_obs_uid_partition_config
             ),
             resource_defs=resource_defs,
         )

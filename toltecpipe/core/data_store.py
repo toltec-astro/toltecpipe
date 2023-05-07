@@ -270,7 +270,10 @@ class ToltecRawDataStore(object):
             ):
 
         commands = []
-        exec_options = [rsync_exec, '-avhPHAX', '--copy-dirlinks', '--append-verify', '--info=progress2']
+        exec_options = [
+                rsync_exec, '-avhPHAX', '--copy-dirlinks', '--append-verify', '--info=progress2',
+                '--chmod=Du=rwx,Dg=rx,Do=rx,Fu=r,Fg=r,Fo=r'
+                ]
         for hn, interfaces in self._interface_group_by_host.items():
             patterns = list(set(
                 self._build_glob_patterns(

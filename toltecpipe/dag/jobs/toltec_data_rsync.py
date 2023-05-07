@@ -13,6 +13,7 @@ from dagster import (
     graph,
     AssetMaterialization,
     AssetKey,
+    config_mapping,
 )
 from pathlib import Path
 import re
@@ -21,6 +22,7 @@ import os
 import subprocess
 import shlex
 from .config_schema import raw_obs_proc_config_schema
+from .partition import make_raw_obs_uid_partition_config
 
 
 @op(
@@ -133,7 +135,9 @@ def run_rsync(context, cmd_item):
 
     # check if dest matches with the required device lable
     rsync_config = context.resources.toltec_data_rsync_config
-    dest_path_device_label_allowlist = rsync_config.get('dest_path_device_label_allowlist', '')
+    allowed_labels = rsync_config.get('dest_path_device_label_allowlist', None)
+    if allowed_labels is None:
+        logger.debug("allowed device label not set, allow all devices.")
 
     r = _query_path_device_info(dest_path, human_readable_size=False)
 
@@ -141,8 +145,11 @@ def run_rsync(context, cmd_item):
     if r['success'] and dest_path_device_info is not None:
         # check label in allowlist:
         dest_path_device_label = dest_path_device_info.get('label', None)
+        if dest_path_device_label is None:
+            # use source as label
+            dest_path_device_label = dest_path_device_info.get("source")
         dest_path_avail_space = dest_path_device_info.get("avail", None)
-        if dest_path_device_label not in dest_path_device_label_allowlist:
+        if allowed_labels is not None and dest_path_device_label not in allowed_labels:
             device_is_bad = (True, f"Dest path device label {dest_path_device_label} not allowed.")
         elif dest_path_avail_space is not None and dest_path_avail_space < 1e6:
             device_is_bad = (True, f"Dest path device available size is too small (<1MB).")
@@ -153,7 +160,7 @@ def run_rsync(context, cmd_item):
 
     device_check_metadata = {
                 "name": f'check_device_for_{name}',
-                'dest_path_device_label_allowlist': dest_path_device_label_allowlist,
+                'dest_path_device_label_allowlist': ','.join(allowed_labels or ["ALL"]),
                 "dest_path_device_info_command": r['command'],
                 'stdout': r['stdout'],
                 }
@@ -208,8 +215,40 @@ def run_rsync(context, cmd_item):
     yield Output(cmd_item)
 
 
-@graph
+
+@config_mapping(config_schema=raw_obs_proc_config_schema)
+def dispatch_raw_obs_config(config):
+    return {
+            "build_raw_data_rsync_commands": {"config": config}
+            }
+
+
+@graph(config=dispatch_raw_obs_config)
 def toltec_data_rsync_graph():
     commands = build_raw_data_rsync_commands()
     command_items = dispatch_rsync_commands(commands)
     command_items.map(run_rsync)
+
+
+def make_toltec_data_rsync_jobs(resource_defs):
+
+    jobs = []
+    with build_resources({"toltec_data_rsync_dest_presets": resource_defs["toltec_data_rsync_dest_presets"]}) as resources:
+        dests = resources.toltec_data_rsync_dest_presets
+        for dest in dests:
+            rdefs = resource_defs.copy()
+            rdefs.pop("toltec_data_rsync_dest_presets")
+            rdefs["toltec_data_rsync_config"] = rdefs['toltec_data_rsync_config'].configured({
+                    "dest_path": dest["dest_path"],
+                    "dest_path_device_label_allowlist": dest["dest_path_device_label_allowlist"],
+                    })
+            raw_obs_uid_partition_config = make_raw_obs_uid_partition_config(
+                    resource_defs=rdefs,
+                    )
+            dest_name = dest["name"]
+            jobs.append(
+                toltec_data_rsync_graph.to_job(
+                    name=f"toltec_data_rsync_to_{dest_name}",
+                    resource_defs=rdefs, config=raw_obs_uid_partition_config)
+                )
+    return jobs

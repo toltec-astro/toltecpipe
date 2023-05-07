@@ -1,8 +1,10 @@
-from dagster import StringSource, String, resource, Array, Field, Enum, EnumValue
+from dagster import StringSource, String, resource, Array, Field, Enum, EnumValue, Noneable
 from loguru import logger
 
+import os
 from ...core.raw_obs_db import DBConfig, ToltecRawObsDB
 from ...core.data_store import ToltecDataStore, ToltecRawDataStore
+import yaml
 
 
 @resource(
@@ -76,7 +78,7 @@ def toltec_data_store(context):
         "hostname_mapping": Field(
             {str: str},
             default_value={},
-            description="The path to TolTEC data product root.",
+            description="The mapping of hostnames in layout.",
         ),
     },
     description="The raw data store config.",
@@ -91,6 +93,18 @@ def toltec_raw_data_store(context):
     return rds
 
 
+_rsync_dest_config = {
+    "dest_path": Field(
+        StringSource,
+        description="The path of target data archive root.",
+    ),
+    "dest_path_device_label_allowlist": Field(
+        Noneable(Array(StringSource)),
+        default_value=None,
+        description="List of devices the dest_path must resides in.",
+    ),
+}
+
 
 @resource(
     config_schema={
@@ -99,16 +113,7 @@ def toltec_raw_data_store(context):
             default_value="rsync",
             description="The path to rsync executable.",
         ),
-        "dest_path": Field(
-            StringSource,
-            default_value="99_data_lmt",
-            description="The path of target data archive root.",
-        ),
-        "dest_path_device_label_allowlist": Field(
-            StringSource,
-            default_value="data_transfer",
-            description="Comma seprated list of devices the dest_path must resides in.",
-        ),
+        **_rsync_dest_config,
     },
     description="The toltec data rsync runtime config.",
 )
@@ -118,22 +123,50 @@ def toltec_data_rsync_config(context):
     return ds
 
 
+@resource(
+    config_schema=Array({
+            "name": Field(
+                StringSource,
+                default_value="default",
+                description="The name of this destination.",
+            ),
+            **_rsync_dest_config,
+        }),
+    description="The toltec data rsync destinations.",
+)
+def toltec_data_rsync_dest_presets(context):
+    ds = context.resource_config
+    logger.debug(f"toltec_data_rsync_dest_presets: {ds}")
+    return ds
 
-resource_defs_by_deployment_name = {
-    "local": {
-        "db_config": db_config.configured(
-            {"binds": [{"name": "toltec", "uri": {"env": "TOLTECPIPE_TOLTEC_DB_URI"}}]}
-        ),
-        "toltec_raw_obs_db": toltec_raw_obs_db,
-        "toltec_data_store": toltec_data_store,
-        "toltec_raw_data_store": toltec_raw_data_store.configured(
-            {"data_lmt_dir": {"env": "TOLTECPIPE_TOLTEC_RAW_DATA_STORE_DATA_LMT_DIR"}}
-            ),
-        "toltec_data_rsync_config": toltec_data_rsync_config.configured(
-            {
-                'dest_path': {"env": "TOLTECPIPE_TOLTEC_DATA_RSYNC_DEST_PATH"},
-                'dest_path_device_label_allowlist': {"env": "TOLTECPIPE_TOLTEC_DATA_RSYNC_DEST_PATH_DEVICE_LABEL_ALLOWLIST"},
-                },
-            ),
+
+
+def load_resource_defs_by_deployment_name(deployment_name):
+
+    resource_defs_by_deployment_name = {
+        "local": {
+            "db_config": db_config,
+            "toltec_raw_obs_db": toltec_raw_obs_db,
+            "toltec_data_store": toltec_data_store,
+            "toltec_raw_data_store": toltec_raw_data_store,
+            "toltec_data_rsync_config": toltec_data_rsync_config,
+            "toltec_data_rsync_dest_presets": toltec_data_rsync_dest_presets,
+        }
     }
-}
+
+    resource_defs = resource_defs_by_deployment_name.get(deployment_name)
+
+    # check if additioanal yaml config is specified
+    resource_defs_path = os.environ.get("TOLTECPIPE_RESOURCE_DEFS_PATH", None)
+    if resource_defs_path is not None:
+        logger.info(f"load resource defs from {resource_defs_path}")
+        with open(resource_defs_path, 'r') as fo:
+            d = yaml.safe_load(fo)
+            for k, v in d.items():
+                if k in resource_defs:
+                    resource_defs[k] = resource_defs[k].configured(v)
+    else:
+        logger.info(f"no resource defs found, skip.")
+
+    logger.debug(f"loaded resource defs for {deployment_name=}:\n{resource_defs}")
+    return resource_defs
