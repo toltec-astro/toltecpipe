@@ -243,9 +243,7 @@ def dispatch_raw_obs_config(config):
                     }
                 },
             "toltec_data_rsync_graph": {
-                "ops": {
-                    "build_raw_data_rsync_commands": {"config": config}
-                    }
+                "config": config
                 },
             }
 

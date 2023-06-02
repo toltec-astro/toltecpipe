@@ -82,11 +82,25 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
             run_key = make_toltec_raw_obs_uid(entry)
             return RunRequest(run_key=run_key, run_config=run_config, tags=tags)
 
+        items = df.to_dict(orient="records")
         run_requests = [
-            _make_run_request(entry) for entry in df.to_dict(orient="records")
+            _make_run_request(entry) for entry in items
         ]
 
-        context.update_cursor(json.dumps(obs_latest))
+        def _make_cursor(item):
+            d = {
+                k: item[k] for k in [
+                    "master",
+                    "obsnum",
+                    "subobsnum",
+                    "scannum",
+                    "obs_type",
+                    ]}
+            d['id_start'] = item['id_min']
+            d['id_end'] = item['id_max'] + 1
+            return d
+
+        context.update_cursor(json.dumps(_make_cursor(items[-1])))
         return run_requests
 
     return toltec_raw_obs_db_update_sensor
