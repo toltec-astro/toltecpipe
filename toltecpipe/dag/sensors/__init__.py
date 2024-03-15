@@ -7,7 +7,7 @@ from dagster import (
     SkipReason,
 )
 from datetime import datetime, timedelta, timezone
-from toltecpipe.core.raw_obs_db import make_toltec_raw_obs_uid
+from tolteca_web.data_prod.conventions import make_toltec_raw_obs_uid
 from ..resources import toltec_raw_obs_db
 
 

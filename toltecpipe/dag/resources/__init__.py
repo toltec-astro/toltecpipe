@@ -2,7 +2,8 @@ from dagster import StringSource, String, resource, Array, Field, Enum, EnumValu
 from loguru import logger
 
 import os
-from ...core.raw_obs_db import DBConfig, ToltecRawObsDB
+from tolteca_web.data_prod.raw_obs_db import ToltecRawObsDB
+from tolteca_datamodels.db.core import DBConfig
 from ...core.data_store import ToltecDataStore, ToltecRawDataStore
 import yaml
 
@@ -10,14 +11,14 @@ import yaml
 @resource(
     config_schema={
         "binds": Field(
-            Array({"name": String, "uri": StringSource}),
-            default_value=[{"name": "dpdb", "uri": "sqlite://"}],
+            Array({"name": String, "url": StringSource}),
+            default_value=[{"name": "dpdb", "url": "sqlite://"}],
         )
     },
     description="The db runtime config.",
 )
 def db_config(context):
-    cfg = DBConfig.parse_obj(context.resource_config)
+    cfg = DBConfig.model_validate(context.resource_config)
     logger.debug(f"db_config: {db_config}")
     return cfg
 
@@ -28,7 +29,7 @@ def db_config(context):
 )
 def toltec_raw_obs_db(context):
     cfg = context.resources.db_config
-    db = ToltecRawObsDB.from_db_config(cfg)
+    db = ToltecRawObsDB(cfg["toltec"].connect())
     logger.debug(f"toltec_raw_obs_db: {db}")
     return db
 

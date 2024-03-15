@@ -1,3 +1,4 @@
+from tollan.utils.log import logger
 from typing import Dict
 from dagster import (
     DynamicOut,

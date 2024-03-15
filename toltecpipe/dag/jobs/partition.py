@@ -1,5 +1,5 @@
 
-from ...core.raw_obs_db import make_toltec_raw_obs_uid, parse_toltec_raw_obs_uid
+from tolteca_web.data_prod.conventions import make_toltec_raw_obs_uid, parse_toltec_raw_obs_uid
 
 from dagster import (
     build_resources,
@@ -18,7 +18,8 @@ def make_raw_obs_uid_partition_config(resource_defs):
             }) as resources:
             r = resources.toltec_raw_obs_db  # type: ignore
             # query the date entries in the db
-            df = r.id_query_grouped(id=slice(-10000, None))
+            df = r.id_query_grouped(id=slice(-1000, None))
+            df = df.sort_values("id_min")
             entries = df.to_dict(orient="records")
             partition_keys = []
             for entry in entries:

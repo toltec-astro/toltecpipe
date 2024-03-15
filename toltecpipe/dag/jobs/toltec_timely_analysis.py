@@ -252,22 +252,22 @@ def dispatch_raw_obs_config(config):
 @graph(config=dispatch_raw_obs_config)
 def dispatch_raw_obs():
     reduce_raw_obs_graph()
-    toltec_data_rsync_graph()
+    # toltec_data_rsync_graph()
 
 
 def make_toltec_timely_analysis_jobs(resource_defs):
     resource_defs = resource_defs.copy()
-    toltec_data_rsync_dest_presets = resource_defs.pop("toltec_data_rsync_dest_presets")
-    with build_resources({"toltec_data_rsync_dest_presets": toltec_data_rsync_dest_presets}) as resources:
-        dests_by_name = {d["name"]: d for d in resources.toltec_data_rsync_dest_presets}
-        dest = dests_by_name.get("data_transfer", None)
-        if dest is not None:
-            resource_defs["toltec_data_rsync_config"] = resource_defs["toltec_data_rsync_config"].configured({
-                "dest_path": dest["dest_path"],
-                "dest_path_device_label_allowlist": dest["dest_path_device_label_allowlist"],
-                })
-        else:
-            raise ValueError("no data transfer dest found")
+    # toltec_data_rsync_dest_presets = resource_defs.pop("toltec_data_rsync_dest_presets")
+    # with build_resources({"toltec_data_rsync_dest_presets": toltec_data_rsync_dest_presets}) as resources:
+    #     dests_by_name = {d["name"]: d for d in resources.toltec_data_rsync_dest_presets}
+    #     dest = dests_by_name.get("data_transfer", None)
+    #     if dest is not None:
+    #         resource_defs["toltec_data_rsync_config"] = resource_defs["toltec_data_rsync_config"].configured({
+    #             "dest_path": dest["dest_path"],
+    #             "dest_path_device_label_allowlist": dest["dest_path_device_label_allowlist"],
+    #             })
+    #     else:
+    #         raise ValueError("no data transfer dest found")
 
     raw_obs_uid_partition_config = make_raw_obs_uid_partition_config(
             resource_defs=resource_defs,
