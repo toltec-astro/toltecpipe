@@ -93,39 +93,43 @@ def reduce_raw_obs_data_item(context, raw_obs_data_item):
         # skip nominal data as those are handled by the adhoc reduction.
         yield Output(reduced_obs_data_item)
         return
-    # trigger KIDs reduction
-    scriptdir = os.path.expanduser('~/kids_bin')
-    filepath = raw_obs_data_item['filepath']
-    name = raw_obs_data_item['meta']['name']
-    cmd = f'{scriptdir}/reduce_kids.sh {filepath}'
-    context.log_event(
-        AssetMaterialization(
-            asset_key=AssetKey(f'reduce_kids_{name}'),
-            description=f"kids reduce command of name {name}",
-            metadata={
-                "name": name,
-                "command": cmd,
-            },
-        )
-    )
-    exitcode = pty.spawn(shlex.split(cmd))
-    # if exitcode > 0:
-        # raise Failure(
-        #     description="Failed run script.",
-        #     metadata={
-        #         "name": name,
-        #         "command": cmd,
-        #     },
-        # )
-    context.log_event(
-        AssetObservation(
-            asset_key=AssetKey(f'reduce_kids_{name}'),
-            metadata={
-                "exitcode": exitcode
-            }
-        )
-    )
+    # this is a function basically waiting for the dispatch_tlaloc reduction
+    # result
     yield Output(reduced_obs_data_item)
+    return
+    # # trigger KIDs reduction
+    # scriptdir = os.path.expanduser('~/kids_bin')
+    # filepath = raw_obs_data_item['filepath']
+    # name = raw_obs_data_item['meta']['name']
+    # cmd = f'{scriptdir}/reduce_kids.sh {filepath}'
+    # context.log_event(
+    #     AssetMaterialization(
+    #         asset_key=AssetKey(f'reduce_kids_{name}'),
+    #         description=f"kids reduce command of name {name}",
+    #         metadata={
+    #             "name": name,
+    #             "command": cmd,
+    #         },
+    #     )
+    # )
+    # exitcode = pty.spawn(shlex.split(cmd))
+    # # if exitcode > 0:
+    #     # raise Failure(
+    #     #     description="Failed run script.",
+    #     #     metadata={
+    #     #         "name": name,
+    #     #         "command": cmd,
+    #     #     },
+    #     # )
+    # context.log_event(
+    #     AssetObservation(
+    #         asset_key=AssetKey(f'reduce_kids_{name}'),
+    #         metadata={
+    #             "exitcode": exitcode
+    #         }
+    #     )
+    # )
+    # yield Output(reduced_obs_data_item)
 
 
 @op(out=Out(Dict), description="Collect reudced obs data items to index.")
@@ -177,7 +181,7 @@ def quicklook_reduced_raw_obs(context, reduced_obs_index):
     # collect quick look images in the output directory
     # TODO properly handle the dpdir
     obsnum = reduced_obs_index['meta']['obsnum']
-    dpdir = Path('/data_lmt/toltec/reduced').joinpath(f'{obsnum}')
+    dpdir = Path('dataprod_toltec/').joinpath(f'{obsnum}')
     ql_files = list(dpdir.glob(f"**/*.png"))
     # compose an md with urls
     md_content = '\n'.join([
@@ -242,9 +246,9 @@ def dispatch_raw_obs_config(config):
                     "create_raw_obs_index": {'config': config}
                     }
                 },
-            "toltec_data_rsync_graph": {
-                "config": config
-                },
+            # "toltec_data_rsync_graph": {
+            #     "config": config
+            #     },
             }
 
 
