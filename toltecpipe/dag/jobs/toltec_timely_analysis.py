@@ -46,7 +46,7 @@ def create_raw_obs_index(context):
 
     dp_index = db.get_dp_index_for_obs(
         obsnum=obsnum, subobsnum=subobsnum, scannum=scannum, master=master,
-        table_name='toltec_r1', with_cal_info=False,
+        table_name='toltec', with_cal_info=False,
     )
     # unpack
     dp_index = dp_index["data_items"][-1]
