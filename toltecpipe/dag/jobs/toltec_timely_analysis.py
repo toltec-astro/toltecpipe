@@ -18,11 +18,12 @@ from dagster import (
 import yaml
 import os
 from pathlib import Path
+import numpy as np
 import pty
 import shlex
 
 from ..sensors import make_toltec_raw_obs_db_sensor
-from .toltec_data_rsync import toltec_data_rsync_graph
+# from .toltec_data_rsync import toltec_data_rsync_graph
 from .config_schema import raw_obs_proc_config_schema
 from .partition import make_raw_obs_uid_partition_config
 
@@ -50,6 +51,10 @@ def create_raw_obs_index(context):
     )
     # unpack
     dp_index = dp_index["data_items"][-1]
+    # fix the id value
+    for k, v in dp_index["meta"].items():
+        if isinstance(v, np.int64):
+            dp_index["meta"][k] = int(v)
     name = dp_index["meta"]["name"]
     # record the asset
     filepath = dataprod_toltec_dir.joinpath(f"{name}.yaml")
@@ -155,7 +160,7 @@ def quicklook_reduced_raw_obs(context, reduced_obs_index):
         yield Output(reduced_obs_index)
         return
 
-    scriptdir = os.path.expanduser('~/kids_bin')
+    scriptdir = os.path.expanduser('~/taco_scripts_v2/ql_maps')
     filepaths = [raw_obs_data_item['filepath'] for raw_obs_data_item in reduced_obs_index['data_items']]
     name = reduced_obs_index['meta']['name']
     cmd = '{}/reduce_kids_ql.sh {}'.format(scriptdir, ' '.join(filepaths))
@@ -212,7 +217,7 @@ def reduce_raw_obs_adhoc(context, raw_obs_index):
         return
     obsnum = raw_obs_index['meta']['obsnum']
     name = raw_obs_index['meta']['name']
-    scriptdir = os.path.expanduser('~/kids_bin')
+    scriptdir = os.path.expanduser('~/taco_scripts_v2/ql_maps')
     cmd = f'{scriptdir}/dispatch_reduction.sh {obsnum}'
     context.log_event(
         AssetMaterialization(

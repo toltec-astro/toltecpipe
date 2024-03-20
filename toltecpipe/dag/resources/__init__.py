@@ -150,8 +150,8 @@ def load_resource_defs_by_deployment_name(deployment_name):
             "toltec_raw_obs_db": toltec_raw_obs_db,
             "toltec_data_store": toltec_data_store,
             "toltec_raw_data_store": toltec_raw_data_store,
-            "toltec_data_rsync_config": toltec_data_rsync_config,
-            "toltec_data_rsync_dest_presets": toltec_data_rsync_dest_presets,
+            # "toltec_data_rsync_config": toltec_data_rsync_config,
+            # "toltec_data_rsync_dest_presets": toltec_data_rsync_dest_presets,
         }
     }
 

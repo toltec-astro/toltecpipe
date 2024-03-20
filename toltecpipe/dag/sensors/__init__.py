@@ -39,7 +39,7 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
         # update id_next in case it is not present
         # this limits to the recet 100 entries
         if id_next is None:
-            id_since, _ = toltec_raw_obs_db.query_group_id_range(time_start=time_start, table_name=table_name)
+            id_since, _ = toltec_raw_obs_db.query_group_id_range_from_time_range(time_start=time_start, table_name=table_name)
             if id_current + 1 - id_since > 100:
                 id0 = id_current + 1 - 100
             else:
