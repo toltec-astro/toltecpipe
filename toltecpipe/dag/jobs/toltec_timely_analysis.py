@@ -37,7 +37,7 @@ from .partition import make_raw_obs_uid_partition_config
 def create_raw_obs_index(context):
     import time
     # FIXME need this to wait for db to finish...
-    time.sleep(5)
+    # time.sleep(5)
     dataprod_toltec_dir = context.resources.toltec_data_store.dataprod_toltec_dir
     db = context.resources.toltec_raw_obs_db
     master = context.op_config["master"]
@@ -45,9 +45,21 @@ def create_raw_obs_index(context):
     subobsnum = context.op_config["subobsnum"]
     scannum = context.op_config["scannum"]
 
-    dp_index = db.get_dp_index_for_obs(
+    query_kw = dict(
         obsnum=obsnum, subobsnum=subobsnum, scannum=scannum, master=master,
-        table_name='toltec', with_cal_info=False,
+        table_name='toltec',
+    )
+
+    n = 0
+    while n < 12:
+        df_group = db.obs_query_grouped(**query_kw)
+        if df_group["all_valid"][0]:
+            break
+        import time
+        time.sleep(5)
+        n += 1
+    dp_index = db.get_dp_index_for_obs(
+        with_cal_info=False, **query_kw,
     )
     # unpack
     dp_index = dp_index["data_items"][-1]
