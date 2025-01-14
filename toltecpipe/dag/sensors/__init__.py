@@ -29,7 +29,7 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
             id_cursor = cursor['id_start']
             id_next = cursor['id_end']
 
-        n_days = 7
+        n_days = 1
         time_start = datetime.now(timezone.utc) - timedelta(days=n_days)
 
         table_name = 'toltec'
@@ -37,11 +37,12 @@ def make_toltec_raw_obs_db_sensor(job, resource_defs, **kwargs) -> SensorDefinit
         obs_latest = toltec_raw_obs_db.query_obs_group_latest(table_name=table_name)
         id_current = obs_latest['id_start']
         # update id_next in case it is not present
-        # this limits to the recet 100 entries
+        # this limits to the recent 1 entries
+        n_backtrack = 20
         if id_next is None:
             id_since, _ = toltec_raw_obs_db.query_group_id_range_from_time_range(time_start=time_start, table_name=table_name)
-            if id_current + 1 - id_since > 100:
-                id0 = id_current + 1 - 100
+            if id_current + 1 - id_since > n_backtrack:
+                id0 = id_current + 1 - n_backtrack
             else:
                 id0 = id_since
             # make sure id is group id

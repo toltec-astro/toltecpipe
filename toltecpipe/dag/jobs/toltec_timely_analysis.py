@@ -172,10 +172,12 @@ def quicklook_reduced_raw_obs(context, reduced_obs_index):
         yield Output(reduced_obs_index)
         return
 
-    scriptdir = os.path.expanduser('~/taco_scripts_v2/ql_maps')
+    # scriptdir = os.path.expanduser('~/taco_scripts_v2/ql_maps')
+    scriptdir = os.path.expanduser('~/toltec_astro_v2/taco_recipes_1/scripts/kids')
     filepaths = [raw_obs_data_item['filepath'] for raw_obs_data_item in reduced_obs_index['data_items']]
     name = reduced_obs_index['meta']['name']
-    cmd = '{}/reduce_kids_ql.sh {}'.format(scriptdir, ' '.join(filepaths))
+    cmd = '{}/reduce_ql.sh {}'.format(scriptdir, ' '.join(filepaths))
+    # cmd = '{}/reduce_kids_ql.sh {}'.format(scriptdir, ' '.join(filepaths))
     context.log_event(
         AssetMaterialization(
             asset_key=AssetKey(f'kids_quicklook_reduce_{name}'),
