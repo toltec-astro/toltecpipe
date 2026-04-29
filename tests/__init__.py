@@ -1,1 +1,1 @@
-"""Unit test package for toltecpipe."""
+"""Tests for toltecpipe."""

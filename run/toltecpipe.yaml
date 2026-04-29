@@ -1,0 +1,45 @@
+# toltecpipe.yaml — configuration for toltecpipe Dagster pipeline
+#
+# Values here are defaults; environment variables (prefixed TOLTECPIPE_)
+# and .env file override these at runtime.
+#
+# Copy to the directory where you run `dagster dev` or `dagster-daemon`.
+
+# --- toltec MySQL database (data acquisition) ---
+toltec_db_host: localhost
+toltec_db_port: 3306
+toltec_db_name: toltec
+toltec_db_user: toltec
+# toltec_db_password: set via TOLTECPIPE_TOLTEC_DB_PASSWORD in .env
+
+# --- Filesystem paths ---
+# data_lmt root (raw NC files, tel files)
+data_lmt_root: /data_lmt
+
+# dataprod output root (shared NFS between machines in production)
+dataprod_toltec_root: /data_lmt/dataprod_toltec
+
+# taco_recipes scripts directory
+recipes_root: run/taco_recipes/ql_maps
+
+# Array pointing table
+apt_file: common/apt.ecsv
+
+# citlali binary
+citlali_bin: /usr/local/bin/citlali
+
+# --- Sensor behaviour ---
+sensor_interval_seconds: 10
+
+# Limit how far back sensors look on first start (ISO date, optional)
+# sensor_start_date: "2026-01-01"
+
+# Roach indices permanently disabled on this installation (comma list)
+# disabled_roach_indices: []
+
+# Seconds to wait after last Valid=1 before declaring quartet complete
+validation_timeout_seconds: 30.0
+
+# --- Dagster PostgreSQL backend (shared across machines) ---
+# Leave blank to use local SQLite (single-machine / dev mode)
+# dagster_postgres_url: postgresql://dagster:password@dbhost:5432/dagster

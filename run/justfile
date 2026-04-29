@@ -1,0 +1,57 @@
+# justfile for toltecpipe run/ directory
+# Run from this directory: just <recipe>
+
+_default:
+    @just --list
+
+# Start Dagster dev server (local mode, mock recipes)
+dev:
+    TOLTECPIPE_ENV_FILE=.env.local \
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    uv run --project .. dagster dev -m toltecpipe.dagster.definitions
+
+# Start Dagster dev server (production .env)
+serve:
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    uv run --project .. dagster dev -m toltecpipe.dagster.definitions
+
+# Start Dagster daemon only (production background mode)
+daemon:
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    uv run --project .. dagster-daemon run
+
+# Start Dagster gRPC code location server (for multi-machine deployment)
+# Run on each machine; webserver connects via workspace.yaml
+grpc PORT="4266":
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    uv run --project .. dagster api grpc \
+        --host 0.0.0.0 --port {{PORT}} \
+        -m toltecpipe.dagster.definitions
+
+# Manually trigger ql_map_job for an obsnum (for testing)
+trigger-ql obsnum:
+    uv run --project .. dagster job execute \
+        -m toltecpipe.dagster.definitions \
+        -j ql_map_job \
+        --config-json '{"ops":{"get_obs_goal":{"config":{"master":"tcs","obsnum":{{obsnum}}}}}}'
+
+# Run mock reduce_pointing.sh directly (test without Dagster)
+mock-pointing obsnum:
+    TOLTECA_DATA_LMT_ROOT=/tmp/toltecpipe_test/data_lmt \
+    TOLTECA_DATAPROD_ROOT=/tmp/toltecpipe_test/dataprod_toltec \
+    TOLTECA_APT_FILE=common/apt.ecsv \
+    CITLALI_BIN=/bin/echo \
+    bash mock_recipes/reduce_pointing.sh {{obsnum}}
+
+# Run mock reduce_beammap.sh directly
+mock-beammap obsnum:
+    TOLTECA_DATAPROD_ROOT=/tmp/toltecpipe_test/dataprod_toltec \
+    bash mock_recipes/reduce_beammap.sh {{obsnum}}
+
+# Show current sensor / run status
+status:
+    uv run --project .. dagster sensor list -m toltecpipe.dagster.definitions
+
+# Run tests
+test:
+    uv run --project .. pytest ../tests/ -v
