@@ -6,21 +6,26 @@ ql_map_job
 
 ingest_catalog_job
     One op: ingest_ql_result.
-    Registers dataprod results in tolteca_db and exports catalog.parquet.
+    Parses reduction output, writes ql_result.json summary, logs to Dagster.
+    (Phase 3: will also write dp_ql_map DataProd to tolteca_db.)
 """
 
 # NOTE: Cannot use `from __future__ import annotations` with Dagster.
 
+import json
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
-from dagster import Config, In, Nothing, Out, OpExecutionContext, job, op
+from dagster import Config, In, Nothing, OpExecutionContext, Out, job, op
 
-__all__ = ["ql_map_job", "ingest_catalog_job"]
+__all__ = ["ingest_catalog_job", "ql_map_job"]
 
 
 # ---------------------------------------------------------------------------
 # ql_map_job ops
 # ---------------------------------------------------------------------------
+
 
 class GetObsGoalConfig(Config):
     """Configuration for get_obs_goal op."""
@@ -69,9 +74,10 @@ def get_obs_goal(context: OpExecutionContext, config: GetObsGoalConfig):
         # Fall back to get_obs_goal.py script
         script = Path(recipes.recipes_root) / "get_obs_goal.py"
         if script.exists():
-            import subprocess
+            import subprocess  # noqa: PLC0415
+
             result = subprocess.run(
-                ["python", str(script), str(obsnum)],
+                [sys.executable, str(script), str(obsnum)],
                 env=recipes.env(),
                 capture_output=True,
                 text=True,
@@ -86,10 +92,18 @@ def get_obs_goal(context: OpExecutionContext, config: GetObsGoalConfig):
     return obsnum, obs_goal
 
 
-_REDUCIBLE_GOALS = frozenset({
-    "pointing", "focus", "astigmatism", "oof",
-    "beammap", "azscan", "elscan", "science",
-})
+_REDUCIBLE_GOALS = frozenset(
+    {
+        "pointing",
+        "focus",
+        "astigmatism",
+        "oof",
+        "beammap",
+        "azscan",
+        "elscan",
+        "science",
+    }
+)
 
 
 @op(
@@ -152,6 +166,7 @@ def ql_map_job():
 # ingest_catalog_job ops
 # ---------------------------------------------------------------------------
 
+
 class IngestQlResultConfig(Config):
     """Configuration for ingest_ql_result op."""
 
@@ -159,17 +174,103 @@ class IngestQlResultConfig(Config):
     result_dir: str
 
 
+def _parse_pointing_params(result_dir: Path, obsnum: int) -> dict:
+    """Parse pointing parameters from a reduction output directory.
+
+    Looks for:
+    1. ``pointing_params.json`` — written by pointing_reader.py (preferred)
+    2. ``toltec_*_pointing_*_params.txt`` — per-array JSON files
+
+    Parameters
+    ----------
+    result_dir : Path
+        Root of reduction output for this obsnum.
+    obsnum : int
+        Observation number.
+
+    Returns
+    -------
+    dict
+        Per-array pointing params dict, keyed by array name.
+        Empty dict if no params files found.
+    """
+    # Prefer the merged summary JSON written by pointing_reader.py
+    summary_path = result_dir / "pointing_params.json"
+    if summary_path.exists():
+        try:
+            data = json.loads(summary_path.read_text())
+            return data.get("arrays", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Fall back to per-array params.txt files
+    arrays: dict = {}
+    for params_file in sorted(result_dir.rglob(f"*pointing_{obsnum}*_params.txt")):
+        try:
+            data = json.loads(params_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        array = data.get("array")
+        if array is None:
+            # Try to infer from filename (toltec_a1100_pointing_...)
+            for a in ("a1100", "a1400", "a2000"):
+                if a in params_file.name:
+                    array = a
+                    break
+        if array:
+            arrays[array] = data
+
+    return arrays
+
+
+def _infer_obs_goal(result_dir: Path, obsnum: int) -> str:
+    """Infer obs_goal from filenames in result directory.
+
+    Parameters
+    ----------
+    result_dir : Path
+        Reduction output directory.
+    obsnum : int
+        Observation number.
+
+    Returns
+    -------
+    str
+        Inferred obs_goal, or ``"unknown"``.
+    """
+    for pattern, goal in [
+        (f"*pointing*{obsnum}*", "pointing"),
+        (f"*beammap*{obsnum}*", "beammap"),
+        (f"*science*{obsnum}*", "science"),
+        ("pointing_params.json", "pointing"),
+    ]:
+        if list(result_dir.glob(pattern)):
+            return goal
+    # Check pointing_params.json content
+    summary = result_dir / "pointing_params.json"
+    if summary.exists():
+        try:
+            return json.loads(summary.read_text()).get("obs_goal", "pointing")
+        except (json.JSONDecodeError, OSError):
+            pass
+    return "unknown"
+
+
 @op(
     name="ingest_ql_result",
     required_resource_keys={"recipes"},
     ins={"start": In(Nothing)},
-    description="Ingest QL result directory into tolteca_db and update catalog.",
+    description="Parse QL result directory and write ql_result.json summary.",
 )
 def ingest_ql_result(context: OpExecutionContext, config: IngestQlResultConfig) -> None:
-    """Register QL map results in tolteca_db and refresh catalog.parquet.
+    """Parse QL reduction output and write a structured ql_result.json.
 
-    Reads FITS / PNG / params files from the result directory and writes
-    a ``dp_ql_map`` DataProd entry.  Triggers catalog.parquet export.
+    Reads FITS / PNG / params files from the result directory, assembles
+    a structured summary, and writes ``ql_result.json`` to the result dir.
+    This JSON is consumed by the ``/api/ql`` HTTP endpoint in tolteca_web.
+
+    Phase 3 (future): will also write a ``dp_ql_map`` DataProd entry to
+    tolteca_db via SQLAlchemy.
 
     Parameters
     ----------
@@ -185,18 +286,53 @@ def ingest_ql_result(context: OpExecutionContext, config: IngestQlResultConfig) 
         context.log.warning(f"Result dir not found: {result_dir}")
         return
 
-    fits_files = list(result_dir.rglob("*.fits"))
-    png_files = list(result_dir.rglob("*.png"))
-    param_files = list(result_dir.rglob("*params*.txt")) + list(result_dir.rglob("*params*.json"))
+    fits_files = [
+        f.relative_to(result_dir).as_posix() for f in result_dir.rglob("*.fits")
+    ]
+    png_files = [
+        f.relative_to(result_dir).as_posix() for f in result_dir.rglob("*.png")
+    ]
 
     context.log.info(
-        f"obsnum={obsnum}: {len(fits_files)} FITS, "
-        f"{len(png_files)} PNG, {len(param_files)} param files"
+        f"obsnum={obsnum}: {len(fits_files)} FITS, {len(png_files)} PNG files"
     )
 
-    # TODO: write to tolteca_db dp_ql_map DataProd
-    # TODO: update catalog.parquet with ql_map_status + pointing columns
-    context.log.info(f"Ingest of obsnum={obsnum} complete (stub)")
+    # Parse pointing parameters
+    pointing_params = _parse_pointing_params(result_dir, obsnum)
+    obs_goal = _infer_obs_goal(result_dir, obsnum)
+
+    # Log pointing summary
+    if pointing_params:
+        for array, params in pointing_params.items():
+            dx = params.get("dx_arcsec", params.get("x_t", {}).get("value", "?"))
+            dy = params.get("dy_arcsec", params.get("y_t", {}).get("value", "?"))
+            fwhm = params.get(
+                "fwhm_a_arcsec", params.get("a_fwhm", {}).get("value", "?")
+            )
+            context.log.info(
+                f'  {array}: dx={dx:.2f}" dy={dy:.2f}" fwhm={fwhm:.2f}"'
+                if isinstance(dx, float)
+                else f"  {array}: dx={dx} dy={dy} fwhm={fwhm}"
+            )
+    else:
+        context.log.info(f"  No pointing params found for obsnum={obsnum}")
+
+    # Build and write ql_result.json
+    summary = {
+        "obsnum": obsnum,
+        "obs_goal": obs_goal,
+        "status": "complete",
+        "arrays": pointing_params,
+        "fits_files": fits_files,
+        "image_paths": [
+            p for p in png_files if "summary" in p or "pointing" in p or "beammap" in p
+        ],
+        "ingested_at": datetime.now(UTC).isoformat(),
+    }
+    out_path = result_dir / "ql_result.json"
+    out_path.write_text(json.dumps(summary, indent=2))
+    context.log.info(f"Wrote {out_path}")
+    context.log.info(f"Ingest of obsnum={obsnum} complete (obs_goal={obs_goal})")
 
 
 @job(

@@ -4,6 +4,10 @@
 #   Uses python_package directly — no gRPC server needed.
 #   Run: dagster dev (picks up pyproject.toml [tool.dagster] automatically)
 #
+# Simulator mode (single code location, no MySQL):
+#   just sim                         — toltecpipe only
+#   just sim-two                     — toltecpipe + tolteca_db (uses workspace-two-loc.yaml)
+#
 # Two-machine production deployment:
 #   Uncomment the grpc_server section and comment out python_package.
 #   Each machine runs:

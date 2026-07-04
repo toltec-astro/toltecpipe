@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .resources import ToltecDbResource
@@ -48,11 +48,11 @@ def query_toltec_db_since(
     for row in rows:
         ts = row.get("timestamp")
         if isinstance(ts, datetime) and ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         result.append({
             **row,
             "master": (row.get("master") or "tcs").lower(),
-            "timestamp": ts or datetime.now(timezone.utc),
+            "timestamp": ts or datetime.now(UTC),
         })
     return result
 

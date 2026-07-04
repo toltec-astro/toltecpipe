@@ -1,0 +1,59 @@
+# dagster.yaml — Dagster instance configuration for toltecpipe
+#
+# Place this file in $DAGSTER_HOME (typically the run/ directory when using
+# `cd run && dagster dev`).  Dagster picks it up automatically.
+#
+# Single-machine dev:
+#   No change needed — defaults to local SQLite (no PostgreSQL required).
+#   Run: cd run && TOLTECPIPE_ENV_FILE=.env.local dagster dev
+#
+# Simulator mode (single or two-loc):
+#   DAGSTER_HOME=$(pwd) is set by the justfile sim/sim-two recipes.
+#   Both code locations (toltecpipe + tolteca_db) share this file and the
+#   same SQLite storage when run with workspace-two-loc.yaml.
+#   Run: just sim        (toltecpipe only)
+#        just sim-two    (toltecpipe + tolteca_db two-loc)
+#
+# Two-machine production:
+#   Both Machine A (tolteca_db / KIDs) and Machine B (toltecpipe / maps)
+#   must point DAGSTER_HOME at a shared PostgreSQL instance.
+#   Uncomment the run_storage / event_log_storage / schedule_storage blocks
+#   and set the connection URL.
+#
+# Environment variable substitution is NOT supported in dagster.yaml directly.
+# Use a sed/envsubst pre-processing step in your deployment scripts, or
+# manage the URL directly in this file (do not commit secrets).
+
+# --- Storage backend (uncomment for production PostgreSQL) ---
+#
+# run_storage:
+#   module: dagster_postgres.run_storage
+#   class: PostgresRunStorage
+#   config:
+#     postgres_url: "postgresql://dagster:PASSWORD@DBHOST:5432/dagster"
+#
+# event_log_storage:
+#   module: dagster_postgres.event_log_storage
+#   class: PostgresEventLogStorage
+#   config:
+#     postgres_url: "postgresql://dagster:PASSWORD@DBHOST:5432/dagster"
+#
+# schedule_storage:
+#   module: dagster_postgres.schedule_storage
+#   class: PostgresScheduleStorage
+#   config:
+#     postgres_url: "postgresql://dagster:PASSWORD@DBHOST:5432/dagster"
+
+# --- Telemetry (disable in production) ---
+telemetry:
+  enabled: false
+
+# --- Compute log manager ---
+# Defaults to local filesystem.  For shared-NFS deployments, point at
+# a path both machines can write to.
+#
+# compute_logs:
+#   module: dagster.core.storage.local_compute_log_manager
+#   class: LocalComputeLogManager
+#   config:
+#     base_dir: /data_lmt/dagster_logs

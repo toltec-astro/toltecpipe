@@ -1,0 +1,34 @@
+# workspace-two-loc.yaml — Two code-location simulator workspace
+#
+# Used to run both pipeline code locations in one Dagster webserver for
+# local development and integration testing.  Both share DAGSTER_HOME so
+# they write to the same SQLite event log and run storage.
+#
+# Prerequisites:
+#   1. Run setup_sim_dirs.sh to create /tmp/toltecpipe_test/ directories
+#   2. Source both env files (done automatically by: just sim-two)
+#   3. Install tolteca_db in the active venv:
+#        cd ../../tolteca_db && uv pip install -e .
+#
+# Start with:
+#   just sim-two
+# Or manually:
+#   set -a; source .env.simulator; source .env.kids-sim; set +a
+#   TOLTECPIPE_SIMULATOR_ENABLED=true TOLTECA_SIMULATOR_ENABLED=true \
+#     dagster dev -w workspace-two-loc.yaml
+#
+# Two-machine production deployment (gRPC):
+#   Machine A (kids): dagster api grpc --host 0.0.0.0 --port 4265 -m tolteca_db.dagster.definitions
+#   Machine B (maps): dagster api grpc --host 0.0.0.0 --port 4266 -m toltecpipe.dagster.definitions
+#   Use workspace-grpc.yaml on the Dagster webserver machine.
+
+load_from:
+  - python_package:
+      package_name: toltecpipe
+      attribute: toltecpipe.dagster.definitions:defs
+      location_name: toltecpipe-maps
+
+  - python_package:
+      package_name: tolteca_db
+      attribute: tolteca_db.dagster.definitions:defs
+      location_name: tolteca-kids

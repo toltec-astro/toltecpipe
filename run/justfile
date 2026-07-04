@@ -48,10 +48,99 @@ mock-beammap obsnum:
     TOLTECA_DATAPROD_ROOT=/tmp/toltecpipe_test/dataprod_toltec \
     bash mock_recipes/reduce_beammap.sh {{obsnum}}
 
+# Start production daemon (reads .env.production)
+prod-daemon:
+    TOLTECPIPE_ENV_FILE=.env.production \
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster-daemon run
+
+# Start production webserver (reads .env.production)
+prod-serve:
+    TOLTECPIPE_ENV_FILE=.env.production \
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster-webserver -m toltecpipe.dagster.definitions
+
+# Start production gRPC code server (Machine B / maps code location)
+prod-grpc PORT="4266":
+    TOLTECPIPE_ENV_FILE=.env.production \
+    TOLTECPIPE_CONFIG=toltecpipe.yaml \
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster api grpc \
+        --host 0.0.0.0 --port {{PORT}} \
+        -m toltecpipe.dagster.definitions
+
+# Manually trigger ingest_catalog_job for an obsnum (simulate dataprod_sensor)
+trigger-ingest obsnum result_dir:
+    uv run --project .. dagster job execute \
+        -m toltecpipe.dagster.definitions \
+        -j ingest_catalog_job \
+        --config-json '{"ops":{"ingest_ql_result":{"config":{"obsnum":{{obsnum}},"result_dir":"{{result_dir}}"}}}}'
+
+# Run real taco_recipes reduce_pointing.sh directly (no Dagster)
+real-pointing obsnum:
+    TOLTECA_DATA_LMT_ROOT=${TOLTECA_DATA_LMT_ROOT:-/data_lmt} \
+    TOLTECA_DATAPROD_ROOT=${TOLTECA_DATAPROD_ROOT:-/tmp/toltecpipe_test/dataprod_toltec} \
+    TOLTECA_APT_FILE=${TOLTECA_APT_FILE:-/data_lmt/common/apt.ecsv} \
+    CITLALI_BIN=${CITLALI_BIN:-/usr/local/bin/citlali} \
+    bash taco_recipes/ql_maps/reduce_pointing.sh {{obsnum}}
+
 # Show current sensor / run status
 status:
     uv run --project .. dagster sensor list -m toltecpipe.dagster.definitions
 
+# Show recent Dagster runs
+logs:
+    uv run --project .. dagster run list -m toltecpipe.dagster.definitions --limit 20
+
 # Run tests
 test:
     uv run --project .. pytest ../tests/ -v
+
+# ─── Simulator recipes ──────────────────────────────────────────────────────
+
+# Create /tmp/toltecpipe_test/ directories (run once before sim/sim-two)
+setup obsnums="100001,100002,100003":
+    bash setup_sim_dirs.sh --obsnums {{obsnums}}
+
+# Start toltecpipe simulator only (maps pipeline, no MySQL required)
+# Sources .env.simulator so all TOLTECPIPE_* vars reach os.getenv().
+sim:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env.simulator; set +a
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster dev \
+        -m toltecpipe.dagster.definitions
+
+# Start toltecpipe maps gRPC server (simulator mode, for two-loc setup)
+sim-maps PORT="4266":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env.simulator; set +a
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster api grpc \
+        --host 0.0.0.0 --port {{PORT}} \
+        -m toltecpipe.dagster.definitions
+
+# Start tolteca_db kids gRPC server (simulator mode, for two-loc setup)
+# Requires tolteca_db installed: cd ../../tolteca_db && uv pip install -e .
+sim-kids PORT="4265":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env.kids-sim; set +a
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster api grpc \
+        --host 0.0.0.0 --port {{PORT}} \
+        -m tolteca_db.dagster.definitions
+
+# Start both code locations in one Dagster dev webserver (two-loc simulator)
+# Sources both .env.simulator and .env.kids-sim together.
+sim-two:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a; source .env.simulator; source .env.kids-sim; set +a
+    DAGSTER_HOME=$(pwd) \
+    uv run --project .. dagster dev \
+        -w workspace-two-loc.yaml

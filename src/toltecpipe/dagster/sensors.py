@@ -17,7 +17,7 @@ dataprod_sensor
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from dagster import (
@@ -30,13 +30,21 @@ from dagster import (
 
 from .jobs import ingest_catalog_job, ql_map_job
 
-__all__ = ["quartet_sensor", "dataprod_sensor"]
+__all__ = ["dataprod_sensor", "quartet_sensor", "simulator_sensor"]
 
 # Obs goals that toltecpipe should process.
-_REDUCIBLE_GOALS = frozenset({
-    "pointing", "focus", "astigmatism", "oof",
-    "beammap", "azscan", "elscan", "science",
-})
+_REDUCIBLE_GOALS = frozenset(
+    {
+        "pointing",
+        "focus",
+        "astigmatism",
+        "oof",
+        "beammap",
+        "azscan",
+        "elscan",
+        "science",
+    }
+)
 
 
 class _QuartetTracker:
@@ -53,10 +61,9 @@ class _QuartetTracker:
                     "last_valid_time": now.isoformat(),
                     "valid_count": valid_count,
                 }
-        else:
-            if valid_count > self.states[key]["valid_count"]:
-                self.states[key]["last_valid_time"] = now.isoformat()
-                self.states[key]["valid_count"] = valid_count
+        elif valid_count > self.states[key]["valid_count"]:
+            self.states[key]["last_valid_time"] = now.isoformat()
+            self.states[key]["valid_count"] = valid_count
 
     def is_complete(
         self, key: str, valid_count: int, expected: int, now: datetime
@@ -65,7 +72,7 @@ class _QuartetTracker:
             return True, f"all {expected} interfaces valid"
         if key in self.states:
             last = datetime.fromisoformat(self.states[key]["last_valid_time"])
-            elapsed = (now - last.replace(tzinfo=timezone.utc)).total_seconds()
+            elapsed = (now - last.replace(tzinfo=UTC)).total_seconds()
             if elapsed >= self.timeout:
                 return True, f"timeout ({elapsed:.0f}s, {valid_count}/{expected} valid)"
         return False, f"{valid_count}/{expected} valid, waiting"
@@ -144,16 +151,13 @@ def quartet_sensor(context: SensorEvaluationContext):
     disabled = set(validation.disabled_roach_indices)
     expected = validation.max_interface_count - len(disabled)
     tracker = _QuartetTracker(validation.validation_timeout_seconds, saved_states)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     run_requests = []
     latest_ts = last_check_dt
     batch_size = int(os.getenv("QUARTET_SENSOR_BATCH_SIZE", "50"))
 
     for key, qdata in quartets.items():
-        enabled = {
-            ri: d for ri, d in qdata["interfaces"].items()
-            if ri not in disabled
-        }
+        enabled = {ri: d for ri, d in qdata["interfaces"].items() if ri not in disabled}
         valid_count = sum(1 for d in enabled.values() if d["valid"] == 1)
         tracker.update(key, valid_count, now)
         is_done, reason = tracker.is_complete(key, valid_count, expected, now)
@@ -175,24 +179,28 @@ def quartet_sensor(context: SensorEvaluationContext):
             context.log.info(f"⏭  {key}: obs_goal={obs_goal!r} not reducible, skip")
             continue
 
-        run_requests.append(RunRequest(
-            run_key=f"ql_map_{key}",
-            run_config={
-                "ops": {
-                    "get_obs_goal": {"config": {
-                        "master": qdata["master"],
-                        "obsnum": qdata["obsnum"],
-                        "subobsnum": qdata["subobsnum"],
-                        "scannum": qdata["scannum"],
-                    }},
-                }
-            },
-            tags={
-                "master": qdata["master"],
-                "obsnum": str(qdata["obsnum"]),
-                "completion_reason": reason,
-            },
-        ))
+        run_requests.append(
+            RunRequest(
+                run_key=f"ql_map_{key}",
+                run_config={
+                    "ops": {
+                        "get_obs_goal": {
+                            "config": {
+                                "master": qdata["master"],
+                                "obsnum": qdata["obsnum"],
+                                "subobsnum": qdata["subobsnum"],
+                                "scannum": qdata["scannum"],
+                            }
+                        },
+                    }
+                },
+                tags={
+                    "master": qdata["master"],
+                    "obsnum": str(qdata["obsnum"]),
+                    "completion_reason": reason,
+                },
+            )
+        )
         context.log.info(f"✓ {key} complete ({reason}) — queuing ql_map_job")
 
         if len(run_requests) >= batch_size:
@@ -200,13 +208,17 @@ def quartet_sensor(context: SensorEvaluationContext):
             break
 
     # Update cursor
-    new_cursor = json.dumps({
-        "last_check": latest_ts.isoformat().replace("+00:00", "Z"),
-        "quartet_states": {
-            k: v for k, v in tracker.states.items()
-            if k in quartets and not any(r.run_key == f"ql_map_{k}" for r in run_requests)
-        },
-    })
+    new_cursor = json.dumps(
+        {
+            "last_check": latest_ts.isoformat().replace("+00:00", "Z"),
+            "quartet_states": {
+                k: v
+                for k, v in tracker.states.items()
+                if k in quartets
+                and not any(r.run_key == f"ql_map_{k}" for r in run_requests)
+            },
+        }
+    )
     context.update_cursor(new_cursor)
 
     return run_requests or SkipReason("No complete tcs quartets found")
@@ -241,7 +253,8 @@ def dataprod_sensor(context: SensorEvaluationContext):
         return SkipReason(f"dataprod_toltec_root not found: {dataprod_root}")
 
     new_dirs = [
-        d for d in dataprod_root.iterdir()
+        d
+        for d in dataprod_root.iterdir()
         if d.is_dir() and d.stat().st_mtime > last_mtime
     ]
 
@@ -254,18 +267,22 @@ def dataprod_sensor(context: SensorEvaluationContext):
             obsnum = int(d.name)
         except ValueError:
             continue
-        run_requests.append(RunRequest(
-            run_key=f"ingest_{d.name}_{int(d.stat().st_mtime)}",
-            run_config={
-                "ops": {
-                    "ingest_ql_result": {"config": {
-                        "obsnum": obsnum,
-                        "result_dir": str(d),
-                    }},
-                }
-            },
-            tags={"obsnum": str(obsnum)},
-        ))
+        run_requests.append(
+            RunRequest(
+                run_key=f"ingest_{d.name}_{int(d.stat().st_mtime)}",
+                run_config={
+                    "ops": {
+                        "ingest_ql_result": {
+                            "config": {
+                                "obsnum": obsnum,
+                                "result_dir": str(d),
+                            }
+                        },
+                    }
+                },
+                tags={"obsnum": str(obsnum)},
+            )
+        )
 
     if run_requests:
         new_mtime = max(d.stat().st_mtime for d in new_dirs)
@@ -276,6 +293,72 @@ def dataprod_sensor(context: SensorEvaluationContext):
     return SkipReason("No valid obsnum directories found")
 
 
+@sensor(
+    name="simulator_sensor",
+    target=ql_map_job,
+    minimum_interval_seconds=int(os.getenv("TOLTECPIPE_SIMULATOR_INTERVAL", "30")),
+    description=(
+        "Simulator: fires ql_map_job for each obsnum in "
+        "TOLTECPIPE_SIMULATOR_OBSNUMS without polling MySQL."
+    ),
+    default_status=DefaultSensorStatus.RUNNING,
+)
+def simulator_sensor(context: SensorEvaluationContext) -> RunRequest | SkipReason:
+    """Dispatch ql_map_job for a pre-configured list of obsnums.
+
+    Reads obsnum list from ``TOLTECPIPE_SIMULATOR_OBSNUMS`` (comma-separated).
+    Advances an index cursor each tick.  Loops if ``TOLTECPIPE_SIMULATOR_LOOP``
+    is set to ``true``.  No MySQL or tel-file access required.
+
+    Parameters
+    ----------
+    context : SensorEvaluationContext
+        Dagster sensor context with integer index cursor.
+    """
+    obsnums_str = os.getenv("TOLTECPIPE_SIMULATOR_OBSNUMS", "100001,100002,100003")
+    obsnums = [int(x.strip()) for x in obsnums_str.split(",") if x.strip()]
+    loop = os.getenv("TOLTECPIPE_SIMULATOR_LOOP", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+    cursor = int(context.cursor or 0)
+
+    if cursor >= len(obsnums):
+        if loop:
+            cursor = 0
+            context.log.info("Simulator looping back to obsnum index 0")
+        else:
+            return SkipReason(f"All {len(obsnums)} simulator obsnums dispatched")
+
+    obsnum = obsnums[cursor]
+    context.update_cursor(str(cursor + 1))
+    context.log.info(
+        f"Simulator dispatching obsnum={obsnum} (index {cursor}/{len(obsnums)})"
+    )
+
+    return RunRequest(
+        run_key=f"sim_{obsnum}",
+        run_config={
+            "ops": {
+                "get_obs_goal": {
+                    "config": {
+                        "master": "tcs",
+                        "obsnum": obsnum,
+                        "subobsnum": 0,
+                        "scannum": 0,
+                    }
+                },
+            }
+        },
+        tags={
+            "obsnum": str(obsnum),
+            "simulator": "true",
+        },
+    )
+
+
 def _resolve_start_date(context: SensorEvaluationContext) -> str:
     """Resolve sensor start date from env vars with priority order."""
     date_str = (
@@ -284,8 +367,10 @@ def _resolve_start_date(context: SensorEvaluationContext) -> str:
         or os.getenv("TOLTECA_SIMULATOR_DATE")
     )
     if not date_str:
-        date_str = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
-        context.log.info(f"No start date configured, defaulting to 7 days ago: {date_str}")
+        date_str = (datetime.now(UTC) - timedelta(days=7)).date().isoformat()
+        context.log.info(
+            f"No start date configured, defaulting to 7 days ago: {date_str}"
+        )
     if "T" not in date_str:
         date_str = f"{date_str}T00:00:00Z"
     elif not date_str.endswith("Z"):

@@ -64,3 +64,9 @@ docs/api/
 
 # Benchmark results
 .benchmarks/
+
+# Dagster runtime state (run/ used as DAGSTER_HOME)
+run/history/
+run/schedules/
+run/storage/
+run/logs/

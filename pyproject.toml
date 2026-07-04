@@ -170,6 +170,9 @@ lint.ignore = [
   "PLC0415", # not top level imports
   "ANN202",  # missing return type annotation
   "F841",    # local variable assigned but never used
+  "S108",    # /tmp paths are fine in tests
+  "S603",    # subprocess of local scripts is fine in tests
+  "PLW1510", # subprocess.run without check is fine in tests
 ]
 
 "docs/conf.py" = [
